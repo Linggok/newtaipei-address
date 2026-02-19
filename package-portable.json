@@ -1,0 +1,33 @@
+{
+  "name": "newtaipei-address-lookup-portable",
+  "version": "1.0.0",
+  "description": "新北市地址查詢系統 - 可攜式版本",
+  "main": "server.js",
+  "scripts": {
+    "build:portable": "pkg . --targets node18-win-x64 --output dist/newtaipei-address-lookup.exe",
+    "build:portable-all": "pkg . --targets node18-win-x64,node18-win-x86,node18-linux-x64,node18-macos-x64 --output dist/newtaipei-address-lookup"
+  },
+  "pkg": {
+    "assets": [
+      "public/**/*",
+      "*.csv",
+      "*.json",
+      "data/**/*"
+    ],
+    "scripts": [
+      "scripts/**/*.js"
+    ]
+  },
+  "keywords": [
+    "新北市",
+    "地址",
+    "門牌",
+    "路名",
+    "可攜式"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  }
+}

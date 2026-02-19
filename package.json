@@ -1,0 +1,45 @@
+{
+  "name": "newtaipei-address-lookup",
+  "version": "1.0.0",
+  "description": "新北市地址查詢系統 - 依路名查詢可能行政區",
+  "main": "server.js",
+  "bin": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "pull-doorplate": "node scripts/pull-ntpc-doorplate.js",
+    "pull-xinzhuang": "node scripts/pull-xinzhuang-doorplate.js",
+    "sort-xinzhuang": "node scripts/sort-xinzhuang-csv.js",
+    "sort-banqiao": "node scripts/sort-banqiao-csv.js",
+    "build:portable": "pkg . --targets node18-win-x64 --output dist/newtaipei-address-lookup.exe"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "新北市",
+    "地址",
+    "門牌",
+    "路名"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "iconv-lite": "^0.7.2",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  },
+  "pkg": {
+    "assets": [
+      "public/**/*"
+    ],
+    "scripts": [
+      "scripts/**/*.js"
+    ]
+  }
+}
