@@ -1,7 +1,7 @@
 {
   "name": "newtaipei-address-lookup",
   "version": "1.0.0",
-  "description": "新北市地址查詢系統 - 依路名查詢可能行政區",
+  "description": "台灣地址欠祥查詢系統 - 依路名查詢可能行政區",
   "main": "server.js",
   "bin": "server.js",
   "scripts": {

@@ -1,5 +1,5 @@
 /**
- * 新北市地址查詢系統 - 後端
+ * 台灣地址欠祥查詢系統 - 後端
  * 優先使用專案內「新北市門牌位置數值資料_with_area.csv」當資料庫。
  */
 
@@ -10,6 +10,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const https = require('https');
+const iconv = require('iconv-lite');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -51,6 +52,19 @@ const SHUANGXI_DOORPLATE_CSV_PATH = path.join(__dirname, '雙溪區門牌位置�
 const GONGLIAO_DOORPLATE_CSV_PATH = path.join(__dirname, '貢寮區門牌位置數值資料.csv');
 const WANLI_DOORPLATE_CSV_PATH = path.join(__dirname, '萬里區門牌位置數值資料.csv');
 const WULAI_DOORPLATE_CSV_PATH = path.join(__dirname, '烏來區門牌位置數值資料.csv');
+// 台北市門牌資料
+const ZHONGZHENG_DOORPLATE_CSV_PATH = path.join(__dirname, '中正區門牌位置數值資料.CSV');
+const ZHONGSHAN_DOORPLATE_CSV_PATH = path.join(__dirname, '中山區門牌位置數值資料.CSV');
+const DATONG_DOORPLATE_CSV_PATH = path.join(__dirname, '大同區門牌位置數值資料_utf8.CSV');
+const SONGSHAN_DOORPLATE_CSV_PATH = path.join(__dirname, '松山區門牌位置數值資料.CSV');
+const DAAN_DOORPLATE_CSV_PATH = path.join(__dirname, '大安區門牌位置數值資料.CSV');
+const WANHUA_DOORPLATE_CSV_PATH = path.join(__dirname, '萬華區門牌位置數值資料.CSV');
+const XINYI_DOORPLATE_CSV_PATH = path.join(__dirname, '信義區門牌位置數值資料.CSV');
+const SHILIN_DOORPLATE_CSV_PATH = path.join(__dirname, '士林區門牌位置數值資料.CSV');
+const BEITOU_DOORPLATE_CSV_PATH = path.join(__dirname, '北投區門牌位置數值資料.CSV');
+const NEIHU_DOORPLATE_CSV_PATH = path.join(__dirname, '內湖區門牌位置數值資料.CSV');
+const NANGANG_DOORPLATE_CSV_PATH = path.join(__dirname, '南港區門牌位置數值資料.CSV');
+const WENSHAN_DOORPLATE_CSV_PATH = path.join(__dirname, '文山區門牌位置數值資料.CSV');
 // 新北市政府資料開放平台（門牌/路名資料集 OID，可選）
 const NTPC_OPEN_DATA_BASE = 'https://data.ntpc.gov.tw';
 const NTPC_DATASET_OID = process.env.NTPC_DATASET_OID || '';
@@ -127,6 +141,149 @@ function getField(r, keys) {
     if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();
   }
   return '';
+}
+
+/** 載入台北市格式的 CSV（格式：省市縣市代碼,鄉鎮市區代碼,區名,村里,鄰,街路段,地區,巷,弄,號,橫座標,縱座標） */
+function loadTaipeiCsv(filePath) {
+  if (!fs.existsSync(filePath)) return null;
+  const byRoad = {};
+  try {
+    // 嘗試不同編碼讀取
+    const buffer = fs.readFileSync(filePath);
+    let raw;
+    let encodingFound = false;
+    
+    // 嘗試的編碼順序（針對大同區檔案特別處理）
+    const encodings = ['utf8', 'big5', 'cp950', 'gb2312', 'gbk', 'gb18030'];
+    
+    // 檢查是否為大同區檔案（可能需要特殊處理）
+    const isDatongFile = filePath.includes('大同區');
+    
+    for (const encoding of encodings) {
+      try {
+        if (encoding === 'utf8') {
+          raw = buffer.toString('utf8');
+        } else {
+          raw = iconv.decode(buffer, encoding);
+        }
+        
+        // 檢查是否成功解碼
+        // 對於大同區，可能需要更寬鬆的檢查
+        const hasChinese = /[\u4e00-\u9fa5]/.test(raw);
+        const hasKeywords = raw.includes('區名') || raw.includes('街路段') || 
+                           raw.includes('大同區') || raw.includes('中正區') || 
+                           raw.includes('中山區');
+        
+        // 如果包含中文字且（有關鍵字 或 是大同區檔案）
+        if (hasChinese && (hasKeywords || isDatongFile)) {
+          encodingFound = true;
+          break;
+        }
+      } catch (e) {
+        // 繼續嘗試下一個編碼
+        continue;
+      }
+    }
+    
+    if (!encodingFound) {
+      // 如果都失敗，嘗試直接使用 utf8
+      raw = buffer.toString('utf8');
+      console.warn('無法確定編碼，使用 UTF-8:', filePath);
+    }
+    
+    raw = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const lines = raw.split('\n').filter((l) => l.trim());
+    if (lines.length < 2) return null;
+    
+    const headerRow = lines[0].replace(/^\uFEFF/, '').trim();
+    
+    // 判斷分隔符：先嘗試 Tab，再嘗試逗號
+    let delimiter = '\t';
+    let headers = headerRow.split('\t').map((h) => h.trim());
+    if (headers.length < 3) {
+      delimiter = ',';
+      headers = headerRow.split(',').map((h) => h.trim());
+    }
+    
+    // 台北市格式欄位索引（支援多種可能的欄位名稱）
+    const idxDistrict = headers.findIndex((h) => {
+      const hLower = h.toLowerCase();
+      return h === '區名' || h === '鄉鎮市區' || h.includes('區名') || h.includes('鄉鎮') || 
+             hLower.includes('district') || hLower.includes('區');
+    });
+    const idxRoad = headers.findIndex((h) => {
+      const hLower = h.toLowerCase();
+      return h === '街路段' || h === '路名' || h.includes('街路') || h.includes('路段') ||
+             hLower.includes('road') || hLower.includes('street') || hLower.includes('路');
+    });
+    const idxLane = headers.findIndex((h) => {
+      const hLower = h.toLowerCase();
+      return h === '巷' || h.includes('巷') || hLower.includes('lane');
+    });
+    const idxAlley = headers.findIndex((h) => {
+      const hLower = h.toLowerCase();
+      return h === '弄' || h.includes('弄') || hLower.includes('alley');
+    });
+    const idxNumber = headers.findIndex((h) => {
+      const hLower = h.toLowerCase();
+      return h === '號' || h.includes('號') || hLower.includes('number') || hLower.includes('號');
+    });
+    
+    // 如果找不到標準欄位，嘗試根據位置推斷（Tab 分隔通常是：省市,鄉鎮,區名,村里,鄰,街路段,地區,巷,弄,號,橫座標,縱座標）
+    let finalIdxDistrict = idxDistrict;
+    let finalIdxRoad = idxRoad;
+    
+    if (finalIdxDistrict < 0 || finalIdxRoad < 0) {
+      // 根據位置推斷（通常區名在第 3 欄，街路段在第 6 欄）
+      if (headers.length >= 6) {
+        if (finalIdxDistrict < 0) finalIdxDistrict = 2; // 第 3 欄（索引 2）
+        if (finalIdxRoad < 0) finalIdxRoad = 5; // 第 6 欄（索引 5）
+        console.warn('使用位置推斷欄位:', filePath, '區名索引:', finalIdxDistrict, '路名索引:', finalIdxRoad);
+      } else {
+        console.error('台北市 CSV 格式不符:', filePath, 'headers:', headers, '欄位數:', headers.length);
+        return null;
+      }
+    }
+    
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(delimiter);
+      const district = (cols[finalIdxDistrict] || '').trim();
+      const road = (cols[finalIdxRoad] || '').trim();
+      
+      // 如果欄位為空或看起來像亂碼，跳過
+      if (!road || !district || road.length === 0 || district.length === 0) continue;
+      
+      // 檢查是否為有效的中文字（至少包含一個中文字）
+      if (!/[\u4e00-\u9fa5]/.test(district) || !/[\u4e00-\u9fa5]/.test(road)) {
+        // 如果不是中文字，可能是編碼問題，跳過這筆資料
+        continue;
+      }
+      
+      if (!byRoad[road]) byRoad[road] = { districts: [], raw: [] };
+      if (district && !byRoad[road].districts.includes(district)) {
+        byRoad[road].districts.push(district);
+      }
+      
+      const laneVal = idxLane >= 0 ? (cols[idxLane] || '').trim() : '';
+      const alleyVal = idxAlley >= 0 ? (cols[idxAlley] || '').trim() : '';
+      const numVal = idxNumber >= 0 ? (cols[idxNumber] || '').trim() : '';
+      
+      // 只加入有巷、弄或號的資料到 raw（避免資料過大）
+      if (laneVal || alleyVal || numVal) {
+        byRoad[road].raw.push({
+          road,
+          site: district,
+          lane: laneVal ? (laneVal.includes('巷') ? laneVal : laneVal + '巷') : '',
+          alley: alleyVal ? (alleyVal.includes('弄') ? alleyVal : alleyVal + '弄') : '',
+          number: numVal
+        });
+      }
+    }
+    return Object.keys(byRoad).length > 0 ? byRoad : null;
+  } catch (e) {
+    console.error('台北市 CSV 讀取失敗:', filePath, e.message);
+    return null;
+  }
 }
 
 /** 從單一 CSV 檔載入並轉成 byRoad（支援 area/行政區、road/路名、lane/巷、alley/弄、number/號） */
@@ -293,150 +450,120 @@ function loadYongheDoorplateCsv(filePath) {
 /** 合併兩個 byRoad，將 b 的資料併入 a（同路名會合併行政區與 raw） */
 function mergeByRoad(a, b) {
   if (!b) return a;
+  if (!a) a = {};
+  
+  // 使用 Set 和 Map 來加速去重
   for (const [road, info] of Object.entries(b)) {
-    if (!a[road]) a[road] = { districts: [], raw: [] };
+    if (!a[road]) {
+      a[road] = { 
+        districts: [...(info.districts || [])], 
+        raw: [...(info.raw || [])] 
+      };
+      continue;
+    }
+    
+    // 合併行政區（使用 Set 去重）
+    const districtSet = new Set(a[road].districts);
     for (const d of info.districts || []) {
-      if (!a[road].districts.includes(d)) a[road].districts.push(d);
+      districtSet.add(d);
+    }
+    a[road].districts = Array.from(districtSet);
+    
+    // 合併 raw 資料（使用 Map 去重）
+    const rawMap = new Map();
+    for (const r of a[road].raw || []) {
+      const key = [r.site, r.road, r.lane || '', r.alley || '', r.number || ''].join('|');
+      rawMap.set(key, r);
     }
     for (const r of info.raw || []) {
       const key = [r.site, r.road, r.lane || '', r.alley || '', r.number || ''].join('|');
-      if (!a[road].raw.some((x) => [x.site, x.road, x.lane || '', x.alley || '', x.number || ''].join('|') === key)) {
-        a[road].raw.push(r);
+      if (!rawMap.has(key)) {
+        rawMap.set(key, r);
       }
     }
+    a[road].raw = Array.from(rawMap.values());
   }
   return a;
 }
 
-/** 從本地載入（新莊區 + 板橋區 + 中和區 + 永和區 + 新店區 + 樹林區 + 鶯歌區 + 三峽區 + 淡水區 + 汐止區 + 瑞芳區 + 土城區 + 蘆洲區 + 五股區 + 泰山區 + 林口區 + 深坑區 + 石碇區 + 坪林區 + 三芝區 + 石門區 + 八里區 + 平溪區 + 雙溪區 + 貢寮區 + 萬里區門牌資料，合併使用） */
-function loadFromLocalDoorplateCsv() {
-  let byRoad = loadOneCsv(XINZHUANG_DOORPLATE_CSV_PATH);
-  const banqiao = loadOneCsv(BANQIAO_DOORPLATE_CSV_PATH);
-  if (banqiao) byRoad = mergeByRoad(byRoad || {}, banqiao);
-  const banqiaoReal = loadBanqiaoRealData(BANQIAO_REAL_DATA_PATH);
-  if (banqiaoReal) byRoad = mergeByRoad(byRoad || {}, banqiaoReal);
-  const zhongheReal = loadBanqiaoRealData(ZHONGHE_REAL_DATA_PATH);
-  if (zhongheReal) byRoad = mergeByRoad(byRoad || {}, zhongheReal);
-  const sanchongReal = loadBanqiaoRealData(SANCHONG_REAL_DATA_PATH);
-  if (sanchongReal) byRoad = mergeByRoad(byRoad || {}, sanchongReal);
-  // yonghe_real_data 已移出；永和區門牌位置數值資料 已加入（格式：street、road、section, area, lane, alley）
-  const yongheDoorplate = loadOneCsv(YONGHE_DOORPLATE_CSV_PATH);
-  if (yongheDoorplate) byRoad = mergeByRoad(byRoad || {}, yongheDoorplate);
-  const xindianDoorplate = loadOneCsv(XINDIAN_DOORPLATE_CSV_PATH);
-  if (xindianDoorplate) {
-    byRoad = mergeByRoad(byRoad || {}, xindianDoorplate);
-    console.log('已載入新店區門牌位置數值資料');
+/** 從本地載入（新莊區 + 板橋區 + 中和區 + 永和區 + 新店區 + 樹林區 + 鶯歌區 + 三峽區 + 淡水區 + 汐止區 + 瑞芳區 + 土城區 + 蘆洲區 + 五股區 + 泰山區 + 林口區 + 深坑區 + 石碇區 + 坪林區 + 三芝區 + 石門區 + 八里區 + 平溪區 + 雙溪區 + 貢寮區 + 萬里區 + 中正區 + 中山區 + 大同區 + 松山區 + 大安區 + 萬華區 + 信義區 + 士林區 + 北投區 + 內湖區 + 南港區 + 文山區門牌資料，合併使用） */
+async function loadFromLocalDoorplateCsv() {
+  const startTime = Date.now();
+  
+  // 定義所有要載入的檔案（並行載入）
+  const loadTasks = [
+    { loader: () => loadOneCsv(XINZHUANG_DOORPLATE_CSV_PATH), name: '新莊區' },
+    { loader: () => loadOneCsv(BANQIAO_DOORPLATE_CSV_PATH), name: '板橋區' },
+    { loader: () => loadBanqiaoRealData(BANQIAO_REAL_DATA_PATH), name: '板橋區(real)' },
+    { loader: () => loadBanqiaoRealData(ZHONGHE_REAL_DATA_PATH), name: '中和區' },
+    { loader: () => loadBanqiaoRealData(SANCHONG_REAL_DATA_PATH), name: '三重區' },
+    { loader: () => loadOneCsv(YONGHE_DOORPLATE_CSV_PATH), name: '永和區' },
+    { loader: () => loadOneCsv(XINDIAN_DOORPLATE_CSV_PATH), name: '新店區' },
+    { loader: () => loadOneCsv(SHULIN_DOORPLATE_CSV_PATH), name: '樹林區' },
+    { loader: () => loadOneCsv(YINGGE_DOORPLATE_CSV_PATH), name: '鶯歌區' },
+    { loader: () => loadOneCsv(SANXIA_DOORPLATE_CSV_PATH), name: '三峽區' },
+    { loader: () => loadOneCsv(TAMSUI_DOORPLATE_CSV_PATH), name: '淡水區' },
+    { loader: () => loadOneCsv(XIZHI_DOORPLATE_CSV_PATH), name: '汐止區' },
+    { loader: () => loadOneCsv(RUIFANG_DOORPLATE_CSV_PATH), name: '瑞芳區' },
+    { loader: () => loadOneCsv(TUCHENG_DOORPLATE_CSV_PATH), name: '土城區' },
+    { loader: () => loadOneCsv(LUZHOU_DOORPLATE_CSV_PATH), name: '蘆洲區' },
+    { loader: () => loadOneCsv(WUGU_DOORPLATE_CSV_PATH), name: '五股區' },
+    { loader: () => loadOneCsv(TAISHAN_DOORPLATE_CSV_PATH), name: '泰山區' },
+    { loader: () => loadOneCsv(LINKOU_DOORPLATE_CSV_PATH), name: '林口區' },
+    { loader: () => loadOneCsv(SHENKENG_DOORPLATE_CSV_PATH), name: '深坑區' },
+    { loader: () => loadOneCsv(SHIDING_DOORPLATE_CSV_PATH), name: '石碇區' },
+    { loader: () => loadOneCsv(PINGLIN_DOORPLATE_CSV_PATH), name: '坪林區' },
+    { loader: () => loadOneCsv(SANZHI_DOORPLATE_CSV_PATH), name: '三芝區' },
+    { loader: () => loadOneCsv(SHIMEN_DOORPLATE_CSV_PATH), name: '石門區' },
+    { loader: () => loadOneCsv(BALI_DOORPLATE_CSV_PATH), name: '八里區' },
+    { loader: () => loadOneCsv(PINGXI_DOORPLATE_CSV_PATH), name: '平溪區' },
+    { loader: () => loadOneCsv(SHUANGXI_DOORPLATE_CSV_PATH), name: '雙溪區' },
+    { loader: () => loadOneCsv(GONGLIAO_DOORPLATE_CSV_PATH), name: '貢寮區' },
+    { loader: () => loadOneCsv(WANLI_DOORPLATE_CSV_PATH), name: '萬里區' },
+    { loader: () => loadOneCsv(WULAI_DOORPLATE_CSV_PATH), name: '烏來區' },
+    { loader: () => loadOneCsv(ZHONGZHENG_DOORPLATE_CSV_PATH), name: '中正區' },
+    { loader: () => loadOneCsv(ZHONGSHAN_DOORPLATE_CSV_PATH), name: '中山區' },
+    { loader: () => loadTaipeiCsv(DATONG_DOORPLATE_CSV_PATH), name: '大同區' },
+    { loader: () => loadOneCsv(SONGSHAN_DOORPLATE_CSV_PATH), name: '松山區' },
+    { loader: () => loadOneCsv(DAAN_DOORPLATE_CSV_PATH), name: '大安區' },
+    { loader: () => loadOneCsv(WANHUA_DOORPLATE_CSV_PATH), name: '萬華區' },
+    { loader: () => loadOneCsv(XINYI_DOORPLATE_CSV_PATH), name: '信義區' },
+    { loader: () => loadOneCsv(SHILIN_DOORPLATE_CSV_PATH), name: '士林區' },
+    { loader: () => loadOneCsv(BEITOU_DOORPLATE_CSV_PATH), name: '北投區' },
+    { loader: () => loadOneCsv(NEIHU_DOORPLATE_CSV_PATH), name: '內湖區' },
+    { loader: () => loadOneCsv(NANGANG_DOORPLATE_CSV_PATH), name: '南港區' },
+    { loader: () => loadOneCsv(WENSHAN_DOORPLATE_CSV_PATH), name: '文山區' }
+  ];
+
+  // 並行載入所有檔案
+  const results = await Promise.all(
+    loadTasks.map(async (task) => {
+      try {
+        const data = await Promise.resolve(task.loader());
+        return { data, name: task.name };
+      } catch (e) {
+        console.error(`載入 ${task.name} 失敗:`, e.message);
+        return { data: null, name: task.name };
+      }
+    })
+  );
+
+  // 合併所有結果
+  let byRoad = null;
+  const loadedDistricts = [];
+  for (const result of results) {
+    if (result.data) {
+      byRoad = mergeByRoad(byRoad || {}, result.data);
+      loadedDistricts.push(result.name);
+    }
   }
-  const shulinDoorplate = loadOneCsv(SHULIN_DOORPLATE_CSV_PATH);
-  if (shulinDoorplate) {
-    byRoad = mergeByRoad(byRoad || {}, shulinDoorplate);
-    console.log('已載入樹林區門牌位置數值資料');
+
+  const loadTime = Date.now() - startTime;
+  console.log(`已並行載入 ${loadedDistricts.length} 個行政區資料，耗時 ${loadTime}ms`);
+  if (loadedDistricts.length > 0) {
+    console.log('已載入的行政區:', loadedDistricts.join(', '));
   }
-  const yinggeDoorplate = loadOneCsv(YINGGE_DOORPLATE_CSV_PATH);
-  if (yinggeDoorplate) {
-    byRoad = mergeByRoad(byRoad || {}, yinggeDoorplate);
-    console.log('已載入鶯歌區門牌位置數值資料');
-  }
-  const sanxiaDoorplate = loadOneCsv(SANXIA_DOORPLATE_CSV_PATH);
-  if (sanxiaDoorplate) {
-    byRoad = mergeByRoad(byRoad || {}, sanxiaDoorplate);
-    console.log('已載入三峽區門牌位置數值資料');
-  }
-  const tamsuiDoorplate = loadOneCsv(TAMSUI_DOORPLATE_CSV_PATH);
-  if (tamsuiDoorplate) {
-    byRoad = mergeByRoad(byRoad || {}, tamsuiDoorplate);
-    console.log('已載入淡水區門牌位置數值資料');
-  }
-  const xizhiDoorplate = loadOneCsv(XIZHI_DOORPLATE_CSV_PATH);
-  if (xizhiDoorplate) {
-    byRoad = mergeByRoad(byRoad || {}, xizhiDoorplate);
-    console.log('已載入汐止區門牌位置數值資料');
-  }
-  const ruifangDoorplate = loadOneCsv(RUIFANG_DOORPLATE_CSV_PATH);
-  if (ruifangDoorplate) {
-    byRoad = mergeByRoad(byRoad || {}, ruifangDoorplate);
-    console.log('已載入瑞芳區門牌位置數值資料');
-  }
-  const tuchengDoorplate = loadOneCsv(TUCHENG_DOORPLATE_CSV_PATH);
-  if (tuchengDoorplate) {
-    byRoad = mergeByRoad(byRoad || {}, tuchengDoorplate);
-    console.log('已載入土城區門牌位置數值資料');
-  }
-  const luzhouDoorplate = loadOneCsv(LUZHOU_DOORPLATE_CSV_PATH);
-  if (luzhouDoorplate) {
-    byRoad = mergeByRoad(byRoad || {}, luzhouDoorplate);
-    console.log('已載入蘆洲區門牌位置數值資料');
-  }
-  const wuguDoorplate = loadOneCsv(WUGU_DOORPLATE_CSV_PATH);
-  if (wuguDoorplate) {
-    byRoad = mergeByRoad(byRoad || {}, wuguDoorplate);
-    console.log('已載入五股區門牌位置數值資料');
-  }
-  const taishanDoorplate = loadOneCsv(TAISHAN_DOORPLATE_CSV_PATH);
-  if (taishanDoorplate) {
-    byRoad = mergeByRoad(byRoad || {}, taishanDoorplate);
-    console.log('已載入泰山區門牌位置數值資料');
-  }
-  const linkouDoorplate = loadOneCsv(LINKOU_DOORPLATE_CSV_PATH);
-  if (linkouDoorplate) {
-    byRoad = mergeByRoad(byRoad || {}, linkouDoorplate);
-    console.log('已載入林口區門牌位置數值資料');
-  }
-  const shenkengDoorplate = loadOneCsv(SHENKENG_DOORPLATE_CSV_PATH);
-  if (shenkengDoorplate) {
-    byRoad = mergeByRoad(byRoad || {}, shenkengDoorplate);
-    console.log('已載入深坑區門牌位置數值資料');
-  }
-  const shidingDoorplate = loadOneCsv(SHIDING_DOORPLATE_CSV_PATH);
-  if (shidingDoorplate) {
-    byRoad = mergeByRoad(byRoad || {}, shidingDoorplate);
-    console.log('已載入石碇區門牌位置數值資料');
-  }
-  const pinglinDoorplate = loadOneCsv(PINGLIN_DOORPLATE_CSV_PATH);
-  if (pinglinDoorplate) {
-    byRoad = mergeByRoad(byRoad || {}, pinglinDoorplate);
-    console.log('已載入坪林區門牌位置數值資料');
-  }
-  const sanzhiDoorplate = loadOneCsv(SANZHI_DOORPLATE_CSV_PATH);
-  if (sanzhiDoorplate) {
-    byRoad = mergeByRoad(byRoad || {}, sanzhiDoorplate);
-    console.log('已載入三芝區門牌位置數值資料');
-  }
-  const shimenDoorplate = loadOneCsv(SHIMEN_DOORPLATE_CSV_PATH);
-  if (shimenDoorplate) {
-    byRoad = mergeByRoad(byRoad || {}, shimenDoorplate);
-    console.log('已載入石門區門牌位置數值資料');
-  }
-  const baliDoorplate = loadOneCsv(BALI_DOORPLATE_CSV_PATH);
-  if (baliDoorplate) {
-    byRoad = mergeByRoad(byRoad || {}, baliDoorplate);
-    console.log('已載入八里區門牌位置數值資料');
-  }
-  const pingxiDoorplate = loadOneCsv(PINGXI_DOORPLATE_CSV_PATH);
-  if (pingxiDoorplate) {
-    byRoad = mergeByRoad(byRoad || {}, pingxiDoorplate);
-    console.log('已載入平溪區門牌位置數值資料');
-  }
-  const shuangxiDoorplate = loadOneCsv(SHUANGXI_DOORPLATE_CSV_PATH);
-  if (shuangxiDoorplate) {
-    byRoad = mergeByRoad(byRoad || {}, shuangxiDoorplate);
-    console.log('已載入雙溪區門牌位置數值資料');
-  }
-  const gongliaoDoorplate = loadOneCsv(GONGLIAO_DOORPLATE_CSV_PATH);
-  if (gongliaoDoorplate) {
-    byRoad = mergeByRoad(byRoad || {}, gongliaoDoorplate);
-    console.log('已載入貢寮區門牌位置數值資料');
-  }
-  const wanliDoorplate = loadOneCsv(WANLI_DOORPLATE_CSV_PATH);
-  if (wanliDoorplate) {
-    byRoad = mergeByRoad(byRoad || {}, wanliDoorplate);
-    console.log('已載入萬里區門牌位置數值資料');
-  }
-  const wulaiDoorplate = loadOneCsv(WULAI_DOORPLATE_CSV_PATH);
-  if (wulaiDoorplate) {
-    byRoad = mergeByRoad(byRoad || {}, wulaiDoorplate);
-    console.log('已載入烏來區門牌位置數值資料');
-  }
+
   if (byRoad && Object.keys(byRoad).length > 0) return { byRoad, source: 'local_csv' };
   return null;
 }
@@ -601,13 +728,12 @@ async function loadNtpcRoads() {
     return cacheNtpcRoads;
   }
   cacheByDistrict = null;
-  let result = loadFromLocalDoorplateCsv();
+  let result = await loadFromLocalDoorplateCsv();
   if (result) {
     cacheNtpcRoads = result.byRoad;
     cacheByDistrict = buildByDistrict(cacheNtpcRoads);
     cacheSource = result.source;
     cacheTime = Date.now();
-    console.log('已從本地門牌載入路名資料：新莊區 + 板橋區 + 中和區 + 永和區 + 新店區 + 樹林區 + 鶯歌區 + 三峽區 + 淡水區 + 汐止區 + 瑞芳區 + 土城區 + 蘆洲區 + 五股區 + 泰山區 + 林口區 + 深坑區 + 石碇區 + 坪林區 + 三芝區 + 石門區 + 八里區 + 平溪區');
     return cacheNtpcRoads;
   }
   result = await loadFromNtpcOpenData();
@@ -906,5 +1032,5 @@ app.get('/api/roads', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`新北市地址查詢服務: http://localhost:${PORT}`);
+  console.log(`台灣地址欠祥查詢服務: http://localhost:${PORT}`);
 });

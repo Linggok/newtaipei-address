@@ -1,7 +1,7 @@
 {
-  "name": "新北市地址查詢系統",
-  "short_name": "新北地址查詢",
-  "description": "依路名查詢新北市可能所在行政區",
+  "name": "台灣地址欠祥查詢系統",
+  "short_name": "台灣地址欠祥查詢",
+  "description": "依路名查詢台灣可能所在行政區",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0f1419",
